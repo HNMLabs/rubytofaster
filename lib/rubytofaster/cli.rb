@@ -38,12 +38,16 @@ module RubyToFaster
                 end
 
       case command
-      when "build"   then cmd_build
-      when "init"    then cmd_init
-      when "inspect" then cmd_inspect
-      when "clean"   then cmd_clean
-      when "doctor"  then cmd_doctor
-      when "watch"   then cmd_watch
+      when "build"     then cmd_build
+      when "new"       then cmd_new
+      when "init"      then cmd_init
+      when "inspect"   then cmd_inspect
+      when "analyze"   then cmd_analyze
+      when "workspace" then cmd_workspace
+      when "bench"     then cmd_bench
+      when "clean"     then cmd_clean
+      when "doctor"    then cmd_doctor
+      when "watch"     then cmd_watch
       when "version"
         @out.puts "rubytofaster #{RubyToFaster::VERSION}"
         0
@@ -51,7 +55,6 @@ module RubyToFaster
         print_help
         0
       else
-        # Allow `rtf my_script.rb` or `rtf my_gem.gemspec` directly as shorthand for `rtf build <target>`
         if File.file?(command)
           @argv.unshift(command)
           cmd_build
@@ -72,23 +75,26 @@ module RubyToFaster
         incremental: true,
         skip_assets: false,
         skip_extensions: false,
+        sbom: false,
+        provenance: false,
         out_dir: nil,
         json: false,
         quiet: false,
         verbose: false
       }
 
-      parser = OptionParser.new do |o|
+      OptionParser.new do |o|
         o.banner = "Usage: rtf build [gem.build.rb | my_gem.gemspec] [options]"
         o.on("--no-cache", "Disable content-addressable incremental cache") { opts[:incremental] = false }
         o.on("--skip-assets", "Skip Angular, Vite, and Next.js resource collection") { opts[:skip_assets] = true }
         o.on("--skip-extensions", "Skip native extension compilation check") { opts[:skip_extensions] = true }
+        o.on("--sbom", "Emit CycloneDX 1.5 SBOM (.sbom.cdx.json) alongside built gem") { opts[:sbom] = true }
+        o.on("--provenance", "Emit .sha256 and SLSA v1 .provenance.json attestation") { opts[:provenance] = true }
         o.on("-o", "--out-dir DIR", "Output directory for built .gem (default: pkg)") { |d| opts[:out_dir] = d }
         o.on("--json", "Emit structured JSON build summary") { opts[:json] = true }
         o.on("-q", "--quiet", "Suppress terminal output") { opts[:quiet] = true }
         o.on("-V", "--verbose", "Show per-stage monotonic timing breakdown") { opts[:verbose] = true }
-      end
-      parser.parse!(@argv)
+      end.parse!(@argv)
 
       target = @argv.first
       result = execute_build_target(target, opts)
@@ -124,12 +130,42 @@ module RubyToFaster
     end
 
     def apply_cli_overrides!(config, opts)
-      config.incremental     = false unless opts[:incremental]
+      config.incremental     = false unless opts.fetch(:incremental, true)
       config.skip_assets     = true  if opts[:skip_assets]
       config.skip_extensions = true  if opts[:skip_extensions]
       config.out_dir         = opts[:out_dir] if opts[:out_dir]
-      config.quiet           = opts[:quiet]
-      config.verbose         = opts[:verbose]
+      config.quiet           = opts[:quiet] if opts.key?(:quiet)
+      config.verbose         = opts[:verbose] if opts.key?(:verbose)
+      config.generate_sbom       if opts[:sbom]
+      config.generate_provenance if opts[:provenance]
+    end
+
+    def cmd_new
+      opts = { vite: false, nextjs: false, angular: false, dir: nil }
+      OptionParser.new do |o|
+        o.banner = "Usage: rtf new <gem_name> [--vite] [--nextjs] [--angular]"
+        o.on("--vite", "Scaffold Vite frontend workspace & manifest starter") { opts[:vite] = true }
+        o.on("--nextjs", "Scaffold Next.js frontend workspace starter") { opts[:nextjs] = true }
+        o.on("--angular", "Scaffold Angular Architect workspace starter") { opts[:angular] = true }
+        o.on("--fullstack", "Scaffold Vite + Next.js + Angular workspaces") do
+          opts[:vite] = opts[:nextjs] = opts[:angular] = true
+        end
+        o.on("-d", "--dir DIR", "Target directory") { |d| opts[:dir] = d }
+      end.parse!(@argv)
+
+      gem_name = @argv.first
+      raise ConfigError, "Usage: rtf new <gem_name> [--vite] [--nextjs] [--angular]" unless gem_name
+
+      created_dir = Scaffolder.new(
+        gem_name,
+        target_dir: opts[:dir],
+        vite: opts[:vite],
+        nextjs: opts[:nextjs],
+        angular: opts[:angular]
+      ).generate!
+
+      @out.puts "Scaffolded new RubyToFaster gem '#{gem_name}' at #{created_dir}"
+      0
     end
 
     def cmd_init
@@ -157,11 +193,13 @@ module RubyToFaster
         "",
         "RubyToFaster.build do |pkg|",
         "  pkg.gemspec #{gemspec_file.dump}",
-        "  pkg.incremental = true"
+        "  pkg.incremental = true",
+        "  pkg.validate_ruby_syntax"
       ]
       lines << '  pkg.vite root: "frontend", out_dir: "dist", mount_to: "public/vite"' if opts[:vite]
       lines << '  pkg.nextjs root: "web", mode: :auto, mount_to: "public/nextjs"' if opts[:nextjs]
       lines << '  pkg.angular root: "admin", mount_to: "public/angular"' if opts[:angular]
+      lines << "  pkg.precompress_assets" if opts[:vite] || opts[:nextjs] || opts[:angular]
       lines << "  pkg.budget max_compressed_kb: 512, max_unpacked_kb: 2048"
       lines << "end"
       lines << ""
@@ -184,6 +222,97 @@ module RubyToFaster
 
       info = Inspector.inspect_gem(gem_file)
       Reporter.new(io: @out, json: json).report_inspection(info)
+      0
+    end
+
+    def cmd_analyze
+      json = false
+      html_out = nil
+      OptionParser.new do |o|
+        o.banner = "Usage: rtf analyze <path/to/file.gem> [--html report.html] [--json]"
+        o.on("--html FILE", "Generate interactive HTML bundle treemap report") { |f| html_out = f }
+        o.on("--json", "Emit JSON analysis output") { json = true }
+      end.parse!(@argv)
+
+      gem_file = @argv.first
+      raise ConfigError, "Usage: rtf analyze <path/to/file.gem> [--html report.html]" unless gem_file
+
+      analyzer = Analyzer.new(gem_file)
+      report = analyzer.analyze
+      written_html = html_out ? analyzer.write_html_report(report, html_out) : nil
+
+      if json
+        @out.puts JSON.pretty_generate(report.merge(html_report: written_html))
+      else
+        @out.puts "Bundle Analysis: #{report[:gem_name]} v#{report[:gem_version]}"
+        @out.puts format(
+          "  Archive : %.2f KB compressed / %.2f KB unpacked (ratio %.1f%%, %d files)",
+          report[:archive_bytes] / 1024.0,
+          report[:unpacked_bytes] / 1024.0,
+          report[:compression_ratio] * 100.0,
+          report[:file_count]
+        )
+        @out.puts "  Categories:"
+        report[:categories].each_value do |cat|
+          @out.puts format(
+            "    - %-22s %8.2f KB unpacked | %8.2f KB gzip (%5.1f%%, %d files)",
+            cat[:label], cat[:unpacked_bytes] / 1024.0, cat[:gzip_bytes] / 1024.0, cat[:share_pct], cat[:file_count]
+          )
+        end
+        @out.puts "  HTML Report: #{written_html}" if written_html
+      end
+      0
+    end
+
+    def cmd_workspace
+      incremental = true
+      json = false
+      patterns = nil
+      OptionParser.new do |o|
+        o.banner = "Usage: rtf workspace [--patterns 'gems/*,packages/*'] [--no-cache] [--json]"
+        o.on("--patterns GLOBS", "Comma-separated workspace globs") { |g| patterns = g.split(",").map(&:strip) }
+        o.on("--no-cache", "Disable incremental Merkle cache") { incremental = false }
+        o.on("--json", "Emit JSON workspace build summary") { json = true }
+      end.parse!(@argv)
+
+      ws_res = Workspace.new(root_dir: Dir.pwd, patterns: patterns, incremental: incremental).build_all
+      if json
+        @out.puts JSON.pretty_generate(
+          waves: ws_res.waves,
+          cache_hits: ws_res.cache_hits,
+          total_gems: ws_res.results.size,
+          total_ms: ws_res.total_ms,
+          results: ws_res.results.map(&:to_h)
+        )
+      else
+        @out.puts "Workspace Build Complete (#{ws_res.results.size} gems in #{ws_res.waves.size} topological waves, #{ws_res.total_ms}ms)"
+        ws_res.waves.each_with_index do |wave, idx|
+          @out.puts "  Wave #{idx + 1}: #{wave.join(', ')}"
+        end
+        ws_res.results.each do |r|
+          tag = r.cache_hit ? "CACHE" : "BUILT"
+          @out.puts format("    [%s] %-24s v%-8s (%6.2f KB, %.2fms)", tag, r.gem_name, r.gem_version, r.compressed_bytes / 1024.0, r.total_ms)
+        end
+      end
+      0
+    end
+
+    def cmd_bench
+      iterations = 5
+      json = false
+      OptionParser.new do |o|
+        o.banner = "Usage: rtf bench [-n ITERATIONS] [--json]"
+        o.on("-n", "--iterations N", Integer, "Benchmark iterations per strategy (default: 5)") { |n| iterations = n }
+        o.on("--json", "Emit JSON benchmark report") { json = true }
+      end.parse!(@argv)
+
+      bench = Benchmarker.new(root_dir: Dir.pwd, iterations: iterations)
+      report = bench.run
+      if json
+        @out.puts JSON.pretty_generate(report)
+      else
+        @out.puts bench.format_markdown(report)
+      end
       0
     end
 
@@ -251,7 +380,7 @@ module RubyToFaster
     end
 
     def workspace_mtime_signature
-      files = Dir.glob("{lib,exe,ext,*.gemspec,gem.build.rb}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) }
+      files = Dir.glob("{lib,exe,ext,sig,*.gemspec,gem.build.rb}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) }
       files += Dir.glob("{*.gemspec,gem.build.rb}").select { |f| File.file?(f) }
       files.uniq.sort.map { |f| "#{f}:#{File.mtime(f).to_f}" }.join("|")
     end
@@ -263,8 +392,12 @@ module RubyToFaster
 
         Usage:
           rtf [build] [gem.build.rb | *.gemspec] [options]
+          rtf new <gem_name> [--vite] [--nextjs] [--angular] [--fullstack]
           rtf init [--vite] [--nextjs] [--angular]
           rtf inspect <pkg/name-version.gem> [--json]
+          rtf analyze <pkg/name-version.gem> [--html report.html] [--json]
+          rtf workspace [--patterns 'gems/*,packages/*'] [--no-cache]
+          rtf bench [-n ITERATIONS] [--json]
           rtf watch [gem.build.rb]
           rtf clean
           rtf doctor
@@ -274,6 +407,8 @@ module RubyToFaster
           --no-cache         Rebuild from scratch ignoring .rtf-cache
           --skip-assets      Skip frontend resource collection
           --skip-extensions  Skip native C/Rust extension verification
+          --sbom             Emit CycloneDX 1.5 SBOM (.sbom.cdx.json)
+          --provenance       Emit .sha256 & SLSA v1 .provenance.json attestation
           -o, --out-dir DIR  Output directory (default: pkg)
           --json             Output structured JSON metrics
           -q, --quiet        Suppress build output

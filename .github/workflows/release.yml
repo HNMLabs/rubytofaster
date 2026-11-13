@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-artifacts:
+    name: Build Deterministic Gem, SBOM & Provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby 3.4
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: false
+
+      - name: Run test suite
+        run: rake test
+
+      - name: Build deterministic release artifacts
+        run: |
+          ./exe/rtf build --no-cache --sbom --provenance
+          VER=$(ruby -Ilib -rrubytofaster/version -e 'puts RubyToFaster::VERSION')
+          ./exe/rtf analyze "pkg/rubytofaster-${VER}.gem" --html "pkg/rubytofaster-${VER}-bundle-report.html"
+
+      - name: Publish GitHub Release with SBOM & SLSA Provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" pkg/* \
+            --title "RubyToFaster ${GITHUB_REF_NAME}" \
+            --generate-notes

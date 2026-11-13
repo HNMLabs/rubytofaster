@@ -1,0 +1,86 @@
+module RubyToFaster
+  VERSION: String
+
+  class Error < StandardError
+  end
+  class ConfigError < Error
+  end
+  class BuildError < Error
+  end
+  class BudgetExceededError < BuildError
+  end
+  class SecurityError < Error
+  end
+
+  def self.build: (?root_dir: String, ?report: bool?, ?out: IO) ?{ (Config) -> void } -> BuildResult?
+  def self.define: (?root_dir: String) ?{ (Config) -> void } -> Config
+  def self.workspace: (?root_dir: String, ?patterns: Array[String]?, ?parallel_jobs: Integer?, ?incremental: bool) -> Workspace::WorkspaceResult
+  def self.inspect_gem: (String gem_path) -> Hash[Symbol, untyped]
+  def self.analyze_gem: (String gem_path, ?html_out: String?) -> Hash[Symbol, untyped]
+  def self.load_script_config: (String script_path) -> Config
+
+  class Config
+    attr_reader root_dir: String
+    attr_reader resources: Array[Hash[Symbol, untyped]]
+    attr_reader budgets: Array[Hash[Symbol, untyped]]
+    attr_reader plugins: Array[untyped]
+    attr_accessor gemspec_path: String?
+    attr_accessor out_dir: String
+    attr_accessor cache_dir: String
+    attr_accessor incremental: bool
+    attr_accessor reproducible: bool
+    attr_accessor source_date_epoch: Integer?
+    attr_accessor parallel_jobs: Integer
+    attr_accessor strict_security: bool
+    attr_accessor auto_detect_resources: bool
+    attr_accessor skip_assets: bool
+    attr_accessor skip_extensions: bool
+    attr_accessor write_staged_assets: bool
+    attr_accessor quiet: bool
+    attr_accessor verbose: bool
+
+    def initialize: (?root_dir: String) -> void
+    def gemspec: (?String? path) -> String?
+    def spec: () { (Gem::Specification) -> void } -> void
+    def vite: (?root: String, ?out_dir: String, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
+    def nextjs: (?root: String, ?mode: Symbol, ?out_dir: String?, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
+    def angular: (?root: String, ?project: String?, ?out_dir: String?, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
+    def generate_asset_helper: (module_name: String, path: String) -> void
+    def budget: (?max_compressed_kb: Numeric?, ?max_unpacked_kb: Numeric?, ?max_entry_kb: Numeric?, ?warn_ratio: Float) -> void
+    def use: (untyped plugin) -> void
+    def precompress_assets: (?min_bytes: Integer) -> void
+    def validate_ruby_syntax: (?normalize_newlines: bool) -> void
+    def generate_sbom: (?embed_in_gem: bool, ?output_filename: String?) -> void
+    def generate_provenance: () -> void
+  end
+
+  class Middleware
+    def initialize: (untyped app, root: String, ?url_prefix: String, ?spa_fallback: bool, ?index_file: String) -> void
+    def call: (Hash[String, untyped] env) -> [Integer, Hash[String, String], Array[String]]
+  end
+
+  class BuildResult
+    attr_reader gem_name: String
+    attr_reader gem_version: String
+    attr_reader gem_path: String
+    attr_reader gem_sha256: String
+    attr_reader gem_sha512: String
+    attr_reader compressed_bytes: Integer
+    attr_reader unpacked_bytes: Integer
+    attr_reader entry_count: Integer
+    attr_reader pruned_count: Integer
+    attr_reader cache_hit: bool
+    attr_reader cache_key: String
+    attr_reader total_ms: Float
+    def to_h: () -> Hash[Symbol, untyped]
+  end
+
+  class Workspace
+    class WorkspaceResult
+      attr_reader waves: Array[Array[String]]
+      attr_reader results: Array[BuildResult]
+      attr_reader total_ms: Float
+      def cache_hits: () -> Integer
+    end
+  end
+end

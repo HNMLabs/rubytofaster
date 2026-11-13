@@ -32,13 +32,25 @@ jobs:
       - name: Run Minitest suite (warnings enabled)
         run: rake test
 
-      - name: Self-hosted build & reproducibility check
+      - name: Self-hosted build, SBOM, SLSA provenance & reproducibility verification
         run: |
           ./gem.build.rb
-          SHA1=$(ruby -rdigest -e 'puts Digest::SHA256.file("pkg/rubytofaster-0.1.0.gem").hexdigest')
-          ./exe/rtf build --no-cache --out-dir pkg-verify
-          SHA2=$(ruby -rdigest -e 'puts Digest::SHA256.file("pkg-verify/rubytofaster-0.1.0.gem").hexdigest')
+          VER=$(ruby -Ilib -rrubytofaster/version -e 'puts RubyToFaster::VERSION')
+          GEM_FILE="pkg/rubytofaster-${VER}.gem"
+          SHA1=$(ruby -rdigest -e "puts Digest::SHA256.file('${GEM_FILE}').hexdigest")
+
+          ./exe/rtf build --no-cache --sbom --provenance --out-dir pkg-verify
+          SHA2=$(ruby -rdigest -e "puts Digest::SHA256.file('pkg-verify/rubytofaster-${VER}.gem').hexdigest")
           test "$SHA1" = "$SHA2"
-          ./exe/rtf inspect pkg/rubytofaster-0.1.0.gem
-          gem install --local pkg/rubytofaster-0.1.0.gem --no-document
+
+          test -f "pkg-verify/rubytofaster-${VER}.gem.sha256"
+          test -f "pkg-verify/rubytofaster-${VER}.gem.provenance.json"
+          test -f "pkg-verify/rubytofaster-${VER}.gem.sbom.cdx.json"
+
+          ./exe/rtf inspect "$GEM_FILE"
+          ./exe/rtf analyze "$GEM_FILE" --html pkg/bundle-report.html
+          test -f pkg/bundle-report.html
+
+          ./exe/rtf bench -n 3
+          gem install --local "$GEM_FILE" --no-document
           rtf --version

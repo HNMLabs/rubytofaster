@@ -4,7 +4,7 @@ require "json"
 
 module RubyToFaster
   # Builds unified frontend resource manifests and zero-dependency Ruby runtime asset helpers
-  # so gems bundling Vite, Next.js, or Angular UIs can resolve hashed chunks without Node.js at runtime.
+  # with built-in Vite / Next.js / Angular Dev-Server HMR support and Rack middleware mounting.
   class AssetManifest
     MANIFEST_SCHEMA = 1
 
@@ -61,7 +61,12 @@ module RubyToFaster
     end
 
     # Generates `<link rel="stylesheet">` and `<script type="module">` HTML tags for an entrypoint.
-    def html_tags(entry_name, framework: nil, url_prefix: "/")
+    # When `dev_server:` (or `ENV["RTF_DEV_SERVER"]`) is provided, emits live HMR dev-server script tags!
+    def html_tags(entry_name, framework: nil, url_prefix: "/", dev_server: ENV["RTF_DEV_SERVER"])
+      if dev_server && !dev_server.to_s.strip.empty?
+        return dev_hmr_tags(entry_name, framework: framework, dev_server: dev_server)
+      end
+
       prefix = url_prefix.end_with?("/") ? url_prefix : "#{url_prefix}/"
       fw_map = @data["frameworks"] || {}
       targets = framework ? { framework.to_s => fw_map[framework.to_s] }.compact : fw_map
@@ -113,7 +118,19 @@ module RubyToFaster
           nil
         end
 
-        def self.html_tags(entry, framework: nil, url_prefix: "/")
+        def self.html_tags(entry, framework: nil, url_prefix: "/", dev_server: ENV["RTF_DEV_SERVER"])
+          if dev_server && !dev_server.to_s.strip.empty?
+            base = dev_server.to_s.chomp("/")
+            clean = entry.to_s.sub(%r{\\A/}, "")
+            if framework.nil? || framework.to_s == "vite"
+              return [
+                %(<script type="module" src="\#{base}/@vite/client"></script>),
+                %(<script type="module" src="\#{base}/\#{clean}"></script>)
+              ].join("\\n")
+            end
+            return %(<script type="module" src="\#{base}/\#{clean}"></script>)
+          end
+
           prefix = url_prefix.end_with?("/") ? url_prefix : "\#{url_prefix}/"
           fws = MANIFEST["frameworks"] || {}
           scope = framework ? { framework.to_s => fws[framework.to_s] }.compact : fws
@@ -155,6 +172,21 @@ module RubyToFaster
         obj.to_s
       else
         obj
+      end
+    end
+
+    private
+
+    def dev_hmr_tags(entry_name, framework:, dev_server:)
+      base  = dev_server.to_s.chomp("/")
+      clean = entry_name.to_s.sub(%r{\A/}, "")
+      if framework.nil? || framework.to_s == "vite"
+        [
+          %(<script type="module" src="#{base}/@vite/client"></script>),
+          %(<script type="module" src="#{base}/#{clean}"></script>)
+        ].join("\n")
+      else
+        %(<script type="module" src="#{base}/#{clean}"></script>)
       end
     end
   end

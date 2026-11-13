@@ -5,19 +5,24 @@ All notable changes to **RubyToFaster** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-13
+
+### Added
+- **Zero-Dependency Rack Asset Middleware (`RubyToFaster::Middleware`)**: Production static & SPA middleware for Vite, Next.js (`/_next/static` & clean HTML export routes), and Angular (`browser/` SPA fallback) with pre-compressed `.gz` negotiation, `ETag` (`304 Not Modified`), `Cache-Control: immutable` on hashed bundles, `X-Content-Type-Options: nosniff`, and `403` path-traversal defense.
+- **Live Dev-Server HMR Integration (`AssetManifest#html_tags`)**: Automatic `@vite/client` and live dev-server entrypoint tag injection when `RTF_DEV_SERVER` (or `dev_server:`) is set during local development.
+- **Topological Monorepo Workspace Runner (`RubyToFaster::Workspace`, `rtf workspace`)**: Turborepo/Nx/Angular-inspired multi-gem dependency DAG discovery, cycle detection, and parallel wave execution across CPU cores.
+- **Interactive Bundle Analyzer (`RubyToFaster::Analyzer`, `rtf analyze --html`)**: `@next/bundle-analyzer`-style `.gem` payload categorization (Ruby `lib/`, Vite, Next.js, Angular, RBS, `.gz`) and self-contained zero-CDN HTML treemap report generator.
+- **Standard Built-in Plugins (`RubyToFaster::Plugins`)**:
+  - `Plugins::Precompress` (`pkg.precompress_assets`): Deterministic `.gz` sidecar generation at build time.
+  - `Plugins::RubyValidator` (`pkg.validate_ruby_syntax`): Compile-time `RubyVM::InstructionSequence` syntax verification and CRLF normalization.
+  - `Plugins::SBOM` (`pkg.generate_sbom` / `--sbom`): CycloneDX 1.5 JSON Software Bill of Materials across Ruby gemspec and frontend `package.json` dependencies.
+  - `Plugins::Provenance` (`pkg.generate_provenance` / `--provenance`): `.sha256` and in-toto / SLSA v1 `.provenance.json` build attestations.
+- **Full-Stack Gem Scaffolder (`RubyToFaster::Scaffolder`, `rtf new`)**: Scaffolds modern zero-Rake Ruby gems with `gem.build.rb`, RBS signatures, tests, and optional `--vite`, `--nextjs`, `--angular`, or `--fullstack` workspaces.
+- **Built-in Benchmark Harness (`RubyToFaster::Benchmarker`, `rtf bench`)**: Measures `gem build` CLI vs `Gem::Package.build` vs `RubyToFaster` cold & warm Merkle cache hits (~46x speedup).
+- **RBS Static Type Signatures (`sig/rubytofaster.rbs`)**: Shipped inside the gem package.
+- **Automated GitHub Release Workflow (`.github/workflows/release.yml`)**: Publishes deterministic `.gem`, CycloneDX SBOM, SLSA provenance, and HTML bundle treemap on `v*` tags.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added
-- **Minimalist Script-First Compiler (`RubyToFaster.build`, `rubytofaster/autorun`)**: Compile Ruby gems directly from standalone Ruby scripts (`gem.build.rb`) or inline `pkg.spec` definitions without Rake or Bundler overhead.
-- **Deterministic In-Memory `.gem` Packager (`RubyToFaster::Packager`)**: Generates RubyGems v2.0+ archives (`metadata.gz`, `data.tar.gz`, `checksums.yaml.gz` with SHA-256 & SHA-512) with lexicographically sorted entries, normalized POSIX modes, and `SOURCE_DATE_EPOCH` reproducibility.
-- **Content-Addressable Incremental Cache (`RubyToFaster::Cache`)**: SHA-256 Merkle build cache in `.rtf-cache/` enabling single-digit millisecond incremental rebuilds and `last-build-trace.json` telemetry.
-- **Frontend Resource Pipelines (`RubyToFaster::Resources`)**:
-  - **Vite Adapter**: Auto-detects `vite.config.*`, parses `.vite/manifest.json` / `manifest.json`, and stages hashed ESM & CSS chunks.
-  - **Next.js Adapter**: Supports static exports (`out/`) and `.next/static` + `build-manifest.json` / `routes-manifest.json` while pruning `.next/cache`.
-  - **Angular Adapter**: Parses `angular.json` Architect workspaces and Angular v17+ `outputPath: { base, browser }` bundles.
-  - **Zero-Dependency Ruby Asset Helper Codegen (`RubyToFaster::AssetManifest`)**: Generates embeddable Ruby modules (`asset_path`, `html_tags`) so host Rack/Rails apps serve hashed assets without Node.js at runtime.
-- **Parallel Native Extension Builder (`RubyToFaster::ExtensionBuilder`)**: Concurrent verification and compilation of `extconf.rb` extensions across CPU cores.
-- **Angular-Inspired Bundle Budgets (`RubyToFaster::BudgetEvaluator`)**: Configurable `max_compressed_kb`, `max_unpacked_kb`, and `max_entry_kb` thresholds with warning ratios.
-- **Vite/Rollup-Style Plugin Hooks (`RubyToFaster::PluginRunner`)**: `before_resolve`, in-memory `transform`, `generate_bundle`, and `after_package` hooks.
-- **Minimalist CLI (`rubytofaster` & `rtf`)**: `build`, `init`, `inspect`, `watch`, `doctor`, `clean`, and `version` subcommands.
-- **Supply-Chain Security Controls**: Path-traversal prevention, symlink containment, array-only subprocess execution, and automatic `.env`/private-key pruning.
+- Initial release of `RubyToFaster` script-first `.gem` compiler, SHA-256 Merkle incremental cache, parallel `extconf.rb` native extension builder, Angular/Vite/Next.js resource adapters, `AssetManifest` Ruby helper codegen, bundle size budgets, plugin runner, and `rtf` CLI.

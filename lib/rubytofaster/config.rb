@@ -157,6 +157,26 @@ module RubyToFaster
       @plugins << plugin
     end
 
+    # Pre-compresses staged web assets into `.gz` sidecars for zero-CPU serving via `RubyToFaster::Middleware`.
+    def precompress_assets(min_bytes: 256)
+      use(Plugins::Precompress.new(min_bytes: min_bytes))
+    end
+
+    # Compiles every packaged `.rb` file via `RubyVM::InstructionSequence` to catch syntax errors at build time.
+    def validate_ruby_syntax(normalize_newlines: true)
+      use(Plugins::RubyValidator.new(normalize_newlines: normalize_newlines))
+    end
+
+    # Generates a CycloneDX 1.5 Software Bill of Materials (`sbom.cdx.json`) across Ruby + npm dependencies.
+    def generate_sbom(embed_in_gem: false, output_filename: nil)
+      use(Plugins::SBOM.new(embed_in_gem: embed_in_gem, output_filename: output_filename))
+    end
+
+    # Emits `.sha256` and SLSA v1 `.provenance.json` attestations alongside built `.gem` files.
+    def generate_provenance
+      use(Plugins::Provenance.new)
+    end
+
     def before_resolve(&block)
       @hooks[:before_resolve] << block if block
     end

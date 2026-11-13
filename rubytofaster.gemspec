@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.metadata["rubygems_mfa_required"] = "true"
 
   spec.files = Dir.chdir(__dir__) do
-    Dir.glob("{exe,lib}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) } +
+    Dir.glob("{exe,lib,sig}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) } +
       %w[LICENSE README.md CHANGELOG.md SECURITY.md rubytofaster.gemspec]
   end.select { |f| File.exist?(File.join(__dir__, f)) }.uniq.sort
 
