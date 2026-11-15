@@ -16,6 +16,10 @@ module RubyToFaster
         @epoch     = epoch
       end
 
+      def cache_fingerprint
+        "Precompress:min=#{@min_bytes}:epoch=#{@epoch}"
+      end
+
       def generate_bundle(entries, config)
         epoch = config.source_date_epoch || (config.reproducible ? @epoch : Time.now.to_i)
         additions = {}

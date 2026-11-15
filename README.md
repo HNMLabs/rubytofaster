@@ -1,42 +1,50 @@
 # RubyToFaster (`rtf`)
 
 [![CI](https://github.com/HNMLabs/rubytofaster/actions/workflows/ci.yml/badge.svg)](https://github.com/HNMLabs/rubytofaster/actions/workflows/ci.yml)
+[![Benchmarks GIF](https://github.com/HNMLabs/rubytofaster/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/HNMLabs/rubytofaster/actions/workflows/benchmarks.yml)
 [![Ruby >= 3.0](https://img.shields.io/badge/ruby-%3E%3D%203.0.0-CC342D?logo=ruby)](https://www.ruby-lang.org/)
 [![RBS Types](https://img.shields.io/badge/types-RBS%20included-06b6d4)](sig/rubytofaster.rbs)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#why-rubytofaster)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Wiki](https://img.shields.io/badge/docs-GitHub%20Wiki-4A90E2)](https://github.com/HNMLabs/rubytofaster/wiki)
 
-**RubyToFaster** (`rtf`) is a next-generation, zero-dependency, script-first build system for Ruby gems. It executes the package compiler directly as a minimalist Ruby script while bringing modern frontend resource pipelines, incremental Merkle caching, topological monorepo builds, interactive bundle treemaps, and supply-chain provenance from the **Angular**, **Vite**, and **Next.js** ecosystems directly to RubyGems.
+**RubyToFaster** (`rtf`) is a next-generation, zero-dependency, script-first build system for Ruby gems. It executes the package compiler directly as a minimalist Ruby script while bringing modern frontend resource pipelines, incremental Merkle caching, topological monorepo builds, interactive bundle treemaps, pure-Ruby GIF89a benchmark telemetry, and supply-chain provenance from the **Angular**, **Vite**, and **Next.js** ecosystems directly to RubyGems.
 
 ---
 
 ## Why RubyToFaster?
 
-| Capability | Traditional `rake build` / `gem build` | **RubyToFaster (`rtf`) v0.2** |
+| Capability | Traditional `rake build` / `gem build` | **RubyToFaster (`rtf`) v0.3** |
 | :--- | :--- | :--- |
 | **Execution Model** | Requires `Rakefile` + `Bundler::GemHelper` | Standalone Ruby script (`./gem.build.rb`), 1-line `autorun`, or `rtf` CLI |
 | **Runtime Dependencies** | Rake, Bundler, task plugins | **Zero** external runtime dependencies (100% Ruby 3.0+ stdlib + RBS types) |
-| **Incremental Caching** | Rebuilds `.gem` unconditionally | Content-addressable SHA-256 **Merkle cache** (`.rtf-cache/`) — **~4ms** hits (**~46x faster**) |
+| **Incremental Caching** | Rebuilds `.gem` unconditionally | Stat-indexed SHA-256 **Merkle cache** (`.rtf-cache/`) — **~0.9ms** hits (**~189x faster**) |
 | **Monorepo / Workspaces** | Custom shell loops | **Topological DAG Workspace Runner** (`rtf workspace`) building gem waves in parallel |
 | **Frontend Resources** | Manual Rake hooks & fragile copy scripts | Native **Vite**, **Next.js**, and **Angular** adapters + `.gz` precompression |
 | **Runtime Asset Serving** | Requires custom Rack glue or Node.js | Zero-dep **`RubyToFaster::Middleware`** (immutable cache, `.gz`, ETag, SPA fallback) + **Dev HMR** |
-| **Bundle Visibility** | Raw `tar -ztvf` inspection | **`rtf analyze --html`** interactive treemap dashboard (`@next/bundle-analyzer` for gems) |
+| **Bundle & Speed Visibility** | Raw `tar -ztvf` & ad-hoc timers | **`rtf analyze --html`** treemap + **`rtf bench --gif`** pure-Ruby animated GIF89a telemetry |
 | **Size Governance** | None | **Angular-style bundle budgets** (`max_compressed_kb`, `max_unpacked_kb`, `max_entry_kb`) |
 | **Supply-Chain Security** | Packages whatever matches `spec.files` | Path/symlink jail, secret pruning, **CycloneDX 1.5 SBOM**, **SLSA v1 Provenance** |
 
 ---
 
-## Measured Benchmarks (`rtf bench`)
+## Measured Benchmarks (`rtf bench --gif`)
 
-Run `rtf bench` inside any gem repository to measure performance on your own hardware. Measured on Linux (`x86_64-linux-gnu`) packaging `rubytofaster` itself (38 files, SHA-256 + SHA-512 verification):
+![RubyToFaster Real Hardware Speed Benchmark](assets/benchmarks.gif)
 
-| Strategy | Mean Latency | Min | P95 | Speedup vs `gem build` |
-| :--- | ---: | ---: | ---: | ---: |
-| `gem build` (CLI subprocess) | `188.50 ms` | `165.67 ms` | `211.33 ms` | **1.0x** |
-| `Gem::Package.build` (in-process, non-sorted) | `27.37 ms` | `24.82 ms` | `33.94 ms` | **6.9x** |
-| **RubyToFaster (cold deterministic + syntax check)** | **`27.35 ms`** | **`25.90 ms`** | **`30.68 ms`** | **6.9x** |
-| **RubyToFaster (incremental Merkle cache hit)** | **`4.04 ms`** | **`3.82 ms`** | **`4.27 ms`** | **46.7x** |
+Run `rtf bench` inside any gem repository to measure real hardware build latency and render an animated `GIF89a` speed chart natively (zero external dependencies—powered by `RubyToFaster::GifRenderer` and continuously verified in [GitHub Actions](.github/workflows/benchmarks.yml)). Raw telemetry: [`assets/benchmarks.json`](assets/benchmarks.json) (`x86_64-linux-gnu`, 39 packaged files, SHA-256 + SHA-512 verified):
+
+| Strategy | Mean Latency | Median | Min | P95 | Throughput | Speedup vs `gem build` |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gem build` (CLI subprocess) | `170.09 ms` | `169.32 ms` | `166.47 ms` | `176.76 ms` | `5.9/s` | **1.0x** |
+| `Gem::Package.build` (in-process, non-sorted) | `26.73 ms` | `25.41 ms` | `24.84 ms` | `32.78 ms` | `37.4/s` | **6.4x** |
+| **RubyToFaster (cold deterministic + syntax check)** | **`24.88 ms`** | **`24.09 ms`** | **`22.62 ms`** | **`28.23 ms`** | **`40.2/s`** | **6.8x** |
+| **RubyToFaster (incremental Merkle cache hit)** | **`0.90 ms`** | **`0.86 ms`** | **`0.80 ms`** | **`1.17 ms`** | **`1107.4/s`** | **189.0x** |
+
+```bash
+# Measure your own gem and emit a real-data animated GIF89a + JSON report:
+rtf bench -n 10 -w 2 --gif assets/benchmarks.gif --json-out assets/benchmarks.json
+```
 
 ---
 
@@ -62,7 +70,7 @@ flowchart TB
     Vite & Next & Angular --> Precompress["Plugins::Precompress (.gz sidecars) + AssetManifest"]
 
     Resolver & Precompress --> Cache{"SHA-256 Merkle Cache (.rtf-cache)"}
-    Cache -- "Cache Hit (~4ms)" --> Attest["Budget Check + CycloneDX SBOM + SLSA Provenance"]
+    Cache -- "Cache Hit (~1ms)" --> Attest["Budget Check + CycloneDX SBOM + SLSA Provenance"]
     Cache -- "Cache Miss (~27ms)" --> Validate["RubyVM Syntax Check + Parallel Native C/Rust (extconf.rb)"]
     Validate --> Packager["Deterministic In-Memory Tar/Gzip Packager (SOURCE_DATE_EPOCH)"]
     Packager --> Attest
@@ -216,7 +224,7 @@ rtf init [--vite] [--nextjs] [--angular]
 rtf inspect <pkg/file.gem> [--json]
 rtf analyze <pkg/file.gem> [--html report.html] [--json]
 rtf workspace [--patterns 'gems/*,packages/*'] [--no-cache] [--json]
-rtf bench [-n ITERATIONS] [--json]
+rtf bench [-n ITERATIONS] [-w WARMUP] [--gif benchmarks.gif] [--json-out bench.json] [--json]
 rtf watch [gem.build.rb]
 rtf doctor
 rtf clean

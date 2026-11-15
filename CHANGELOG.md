@@ -5,6 +5,25 @@ All notable changes to **RubyToFaster** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-15
+
+### Added
+- **Zero-Dependency Animated GIF89a Speed Renderer (`RubyToFaster::GifRenderer`, `rtf bench --gif`)**: Pure-Ruby GIF89a encoder (variable-width 9..12-bit LZW compressor, transparent inter-frame delta compression, `NETSCAPE2.0` looping, and embedded JSON provenance comment blocks) rendering real measured hardware speed scores into an `880x460` dark-mode animated dashboard.
+- **Statistical Benchmark Telemetry (`RubyToFaster::Benchmarker`, `RubyToFaster.bench`)**: Added warmup iterations (`-w` / `--warmup`), GC isolation between runs, median/stddev/throughput (`ops/sec`) metrics, git SHA metadata, and `--gif`, `--json-out`, and `--markdown-out` exporters.
+- **Automated GitHub Benchmark GIF Pipeline (`.github/workflows/benchmarks.yml`)**: Measures real runner latencies on GitHub Actions, publishes Markdown tables to `$GITHUB_STEP_SUMMARY`, uploads GIF/JSON artifacts, and keeps `assets/benchmarks.gif` updated.
+- **Configurable Archive Compression (`Config#compression_level`)**: Defaults to `Zlib::DEFAULT_COMPRESSION` with full support for `Zlib::BEST_COMPRESSION`.
+
+### Fixed
+- **Parallel Workspace Thread Safety**: Replaced process-global `@pending_script_capture` and unsynchronized `Dir.chdir` / `SOURCE_DATE_EPOCH` mutations with thread-local capture state, `RubyToFaster.with_chdir` monitor synchronization, `base:` globbing, and `Packager::EPOCH_MUTEX`.
+- **Merkle Cache Invalidation Accuracy**: Included plugin fingerprints, `compression_level`, and full `Gem::Specification` metadata (`authors`, `email`, `homepage`, `require_paths`, `extensions`, `post_install_message`) in `Cache#compute_key`, and ran dynamic inline transform closures prior to cache lookup.
+- **`autorun` Multi-Load Re-Entrancy**: Fixed `require "rubytofaster/autorun"` becoming a no-op across subsequent `rtf watch` cycles and multi-gem `Workspace` builds, and resolved `root_dir` from the invoking script path.
+- **Parent-Directory Symlink Jail Hardening**: Blocked intermediate directory symlink escapes across `FileResolver`, `Resources::Base`, and `Middleware`.
+- **Rack Middleware HTTP & Security Fixes**: Added percent-decoding before path-traversal/null-byte checks, `Accept-Encoding: gzip;q=0` handling, distinct `-gz` weak ETags, and multi-tag `If-None-Match` matching with `Vary: Accept-Encoding` on `304` responses.
+- **SBOM Nested `--out-dir` & Subdirectory Gemspec CLI**: Fixed `Plugins::SBOM` `package.json` discovery when `--out-dir` is deeply nested and fixed `rtf build path/to/sub.gemspec` root directory resolution.
+
+### Performance
+- **Sub-Millisecond Incremental Merkle Cache Hits (~0.9ms, >150x faster than `gem build`)**: Added stat-indexed SHA-256 file digest memoization, directory-level `realpath` memoization, in-memory outer `.gem` tar assembly, and fingerprinted plugin short-circuiting on verified cache hits.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

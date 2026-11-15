@@ -10,7 +10,7 @@
 | `rtf inspect <file.gem>` | Verifies SHA-256/SHA-512 checksums and lists tar entries & frontend manifests (`--json`). |
 | `rtf analyze <file.gem>` | Breaks down unpacked vs gzipped composition and writes interactive HTML treemaps (`--html FILE`, `--json`). |
 | `rtf workspace` | Builds multi-gem monorepos in parallel topological dependency waves (`--patterns`, `--no-cache`, `--json`). |
-| `rtf bench` | Benchmarks `gem build` CLI vs `Gem::Package.build` vs `RubyToFaster` cold & warm cache (`-n N`, `--json`). |
+| `rtf bench` | Benchmarks `gem build` CLI vs `Gem::Package.build` vs `RubyToFaster` cold & warm cache (`-n N`, `-w WARMUP`, `--gif FILE`, `--json-out FILE`, `--markdown-out FILE`, `--json`). |
 | `rtf watch [target]` | Watches source files and runs incremental builds (`-i SECONDS`). |
 | `rtf doctor` | Prints JSON diagnostics for Ruby, RubyGems, gemspecs, and detected frontend configs. |
 | `rtf clean` | Deletes `.rtf-cache/` and `pkg/`. |

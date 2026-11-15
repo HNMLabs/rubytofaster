@@ -9,6 +9,10 @@ module RubyToFaster
         @normalize_newlines = normalize_newlines
       end
 
+      def cache_fingerprint
+        "RubyValidator:normalize=#{@normalize_newlines}"
+      end
+
       def transform(gem_path, content)
         return nil unless gem_path.end_with?(".rb") || gem_path.end_with?(".gemspec")
 

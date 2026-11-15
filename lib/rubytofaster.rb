@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "monitor"
+
 require_relative "rubytofaster/version"
 require_relative "rubytofaster/errors"
 require_relative "rubytofaster/config"
@@ -21,6 +23,7 @@ require_relative "rubytofaster/analyzer"
 require_relative "rubytofaster/compiler"
 require_relative "rubytofaster/workspace"
 require_relative "rubytofaster/scaffolder"
+require_relative "rubytofaster/gif_renderer"
 require_relative "rubytofaster/benchmarker"
 require_relative "rubytofaster/reporter"
 require_relative "rubytofaster/cli"
@@ -28,16 +31,37 @@ require_relative "rubytofaster/cli"
 # RubyToFaster: Minimalist, script-first build system for Ruby gems
 # with native resource pipelines for Angular, Vite, and Next.js.
 module RubyToFaster
+  CHDIR_MONITOR = Monitor.new
+
   class << self
-    attr_accessor :pending_script_capture
+    def pending_script_capture
+      Thread.current[:rtf_pending_script_capture]
+    end
+
+    def pending_script_capture=(callable)
+      Thread.current[:rtf_pending_script_capture] = callable
+    end
+
+    # Synchronizes process-wide `Dir.chdir` when loading `.gemspec` or build scripts across threads.
+    def with_chdir(dir, &block)
+      target = File.expand_path(dir)
+      CHDIR_MONITOR.synchronize do
+        if File.expand_path(Dir.pwd) == target
+          block.call
+        else
+          Dir.chdir(target, &block)
+        end
+      end
+    end
 
     # Executes a gem build directly from a Ruby script or caller.
-    def build(root_dir: Dir.pwd, report: nil, out: $stdout)
-      config = Config.new(root_dir: root_dir)
+    def build(root_dir: nil, report: nil, out: $stdout)
+      effective_root = root_dir || Thread.current[:rtf_default_root_dir] || Dir.pwd
+      config = Config.new(root_dir: effective_root)
       yield(config) if block_given?
 
-      if @pending_script_capture
-        @pending_script_capture.call(config)
+      if (capture = pending_script_capture)
+        capture.call(config)
         return nil
       end
 
@@ -48,10 +72,11 @@ module RubyToFaster
     end
 
     # Defines a reusable Config object without immediately running the compiler.
-    def define(root_dir: Dir.pwd)
-      config = Config.new(root_dir: root_dir)
+    def define(root_dir: nil)
+      effective_root = root_dir || Thread.current[:rtf_default_root_dir] || Dir.pwd
+      config = Config.new(root_dir: effective_root)
       yield(config) if block_given?
-      @pending_script_capture&.call(config)
+      pending_script_capture&.call(config)
       config
     end
 
@@ -63,6 +88,16 @@ module RubyToFaster
         parallel_jobs: parallel_jobs,
         incremental: incremental
       ).build_all
+    end
+
+    # Runs real hardware build benchmarks and optionally writes GIF89a, JSON, or Markdown artifacts.
+    def bench(root_dir: Dir.pwd, iterations: 5, warmup: 1, gif_out: nil, json_out: nil, markdown_out: nil)
+      runner = Benchmarker.new(root_dir: root_dir, iterations: iterations, warmup: warmup)
+      report = runner.run
+      runner.write_gif(report, gif_out) if gif_out
+      runner.write_json(report, json_out) if json_out
+      runner.write_markdown(report, markdown_out) if markdown_out
+      report
     end
 
     # Inspects and verifies an existing `.gem` file without extracting to disk.
@@ -78,21 +113,25 @@ module RubyToFaster
       data
     end
 
-    # Loads a standalone compiler script (`gem.build.rb`) and captures its Config.
+    # Loads a standalone compiler script (`gem.build.rb`) and captures its Config in a thread-safe manner.
     def load_script_config(script_path)
+      abs_script = File.expand_path(script_path)
+      script_dir = File.dirname(abs_script)
       captured = nil
-      script_dir = File.dirname(File.expand_path(script_path))
 
-      prev_capture = @pending_script_capture
-      @pending_script_capture = ->(cfg) { captured = cfg }
+      prev_capture = pending_script_capture
+      prev_root    = Thread.current[:rtf_default_root_dir]
+      self.pending_script_capture = ->(cfg) { captured = cfg }
+      Thread.current[:rtf_default_root_dir] = script_dir
 
-      Dir.chdir(script_dir) do
-        Kernel.load(File.expand_path(script_path), true)
+      with_chdir(script_dir) do
+        Kernel.load(abs_script, true)
       end
 
       captured || Config.new(root_dir: script_dir)
     ensure
-      @pending_script_capture = prev_capture
+      self.pending_script_capture = prev_capture
+      Thread.current[:rtf_default_root_dir] = prev_root
     end
   end
 end

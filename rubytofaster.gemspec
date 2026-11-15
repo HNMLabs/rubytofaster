@@ -27,10 +27,10 @@ Gem::Specification.new do |spec|
   spec.metadata["security_policy_uri"]   = "https://github.com/HNMLabs/rubytofaster/blob/main/SECURITY.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
-  spec.files = Dir.chdir(__dir__) do
-    Dir.glob("{exe,lib,sig}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) } +
+  spec.files = (
+    Dir.glob("{exe,lib,sig}/**/*", File::FNM_DOTMATCH, base: __dir__).select { |f| File.file?(File.join(__dir__, f)) } +
       %w[LICENSE README.md CHANGELOG.md SECURITY.md rubytofaster.gemspec]
-  end.select { |f| File.exist?(File.join(__dir__, f)) }.uniq.sort
+  ).select { |f| File.exist?(File.join(__dir__, f)) }.uniq.sort
 
   spec.bindir        = "exe"
   spec.executables   = %w[rubytofaster rtf]

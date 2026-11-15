@@ -110,8 +110,18 @@ module RubyToFaster
         return Compiler.new(config).run
       end
 
+      if target && target.end_with?(".gemspec")
+        spec_abs = File.expand_path(target)
+        spec_dir = File.dirname(spec_abs)
+        return RubyToFaster.build(root_dir: spec_dir, report: false) do |cfg|
+          cfg.gemspec(File.basename(spec_abs))
+          # Preserve relative --out-dir relative to caller's working directory when explicitly passed
+          opts = opts.merge(out_dir: File.expand_path(opts[:out_dir], Dir.pwd)) if opts[:out_dir]
+          apply_cli_overrides!(cfg, opts)
+        end
+      end
+
       RubyToFaster.build(root_dir: Dir.pwd, report: false) do |cfg|
-        cfg.gemspec(target) if target && target.end_with?(".gemspec")
         apply_cli_overrides!(cfg, opts)
       end
     end
@@ -191,7 +201,7 @@ module RubyToFaster
         "",
         'require "rubytofaster"',
         "",
-        "RubyToFaster.build do |pkg|",
+        "RubyToFaster.build(root_dir: __dir__) do |pkg|",
         "  pkg.gemspec #{gemspec_file.dump}",
         "  pkg.incremental = true",
         "  pkg.validate_ruby_syntax"
@@ -299,19 +309,48 @@ module RubyToFaster
 
     def cmd_bench
       iterations = 5
-      json = false
+      warmup     = 1
+      json       = false
+      gif_out    = nil
+      json_out   = nil
+      md_out     = nil
+
       OptionParser.new do |o|
-        o.banner = "Usage: rtf bench [-n ITERATIONS] [--json]"
+        o.banner = "Usage: rtf bench [-n ITERATIONS] [-w WARMUP] [--gif FILE] [--json-out FILE] [--json]"
         o.on("-n", "--iterations N", Integer, "Benchmark iterations per strategy (default: 5)") { |n| iterations = n }
-        o.on("--json", "Emit JSON benchmark report") { json = true }
+        o.on("-w", "--warmup N", Integer, "Warmup runs before timing each strategy (default: 1)") { |w| warmup = w }
+        o.on("--gif FILE", "Render real measured speed scores as an animated GIF89a chart") { |f| gif_out = f }
+        o.on("--json-out FILE", "Write structured JSON benchmark telemetry to FILE") { |f| json_out = f }
+        o.on("--markdown-out FILE", "Write Markdown benchmark table to FILE") { |f| md_out = f }
+        o.on("--json", "Emit JSON benchmark report to stdout") { json = true }
       end.parse!(@argv)
 
-      bench = Benchmarker.new(root_dir: Dir.pwd, iterations: iterations)
+      bench  = Benchmarker.new(root_dir: Dir.pwd, iterations: iterations, warmup: warmup)
       report = bench.run
+
+      written_gif  = gif_out  ? bench.write_gif(report, gif_out)      : nil
+      written_json = json_out ? bench.write_json(report, json_out)    : nil
+      written_md   = md_out   ? bench.write_markdown(report, md_out)  : nil
+
+      output_payload = if written_gif || written_json || written_md
+                         report.merge(
+                           artifacts: {
+                             gif: written_gif,
+                             json: written_json,
+                             markdown: written_md
+                           }.compact
+                         )
+                       else
+                         report
+                       end
+
       if json
-        @out.puts JSON.pretty_generate(report)
+        @out.puts JSON.pretty_generate(output_payload)
       else
         @out.puts bench.format_markdown(report)
+        @out.puts "\nAnimated GIF89a Speed Chart : #{written_gif}" if written_gif
+        @out.puts "JSON Telemetry Report       : #{written_json}" if written_json
+        @out.puts "Markdown Benchmark Table    : #{written_md}" if written_md
       end
       0
     end
@@ -379,10 +418,21 @@ module RubyToFaster
       0
     end
 
-    def workspace_mtime_signature
-      files = Dir.glob("{lib,exe,ext,sig,*.gemspec,gem.build.rb}/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) }
-      files += Dir.glob("{*.gemspec,gem.build.rb}").select { |f| File.file?(f) }
-      files.uniq.sort.map { |f| "#{f}:#{File.mtime(f).to_f}" }.join("|")
+    def workspace_mtime_signature(base_dir = Dir.pwd)
+      globs = "{lib,exe,bin,ext,sig,frontend,portal,admin,web,ui,public}/**/*"
+      files = Dir.glob(globs, File::FNM_DOTMATCH, base: base_dir)
+      files.concat(Dir.glob("{*.gemspec,gem.build.rb,build.rtf.rb,Fastbuild.rb}", base: base_dir))
+
+      files.uniq.sort.filter_map do |rel|
+        next if rel.include?("/node_modules/") || rel.start_with?(".git/", ".rtf-cache/", "pkg/")
+
+        full = File.join(base_dir, rel)
+        next unless File.file?(full)
+
+        "#{rel}:#{File.mtime(full).to_f}"
+      rescue Errno::ENOENT
+        nil
+      end.join("|")
     end
 
     def print_help
@@ -397,7 +447,7 @@ module RubyToFaster
           rtf inspect <pkg/name-version.gem> [--json]
           rtf analyze <pkg/name-version.gem> [--html report.html] [--json]
           rtf workspace [--patterns 'gems/*,packages/*'] [--no-cache]
-          rtf bench [-n ITERATIONS] [--json]
+          rtf bench [-n ITERATIONS] [-w WARMUP] [--gif benchmarks.gif] [--json-out bench.json] [--json]
           rtf watch [gem.build.rb]
           rtf clean
           rtf doctor

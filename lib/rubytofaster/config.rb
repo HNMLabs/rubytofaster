@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "etc"
+require "zlib"
 
 module RubyToFaster
   # Minimalist script-first DSL configuration for RubyToFaster builds.
@@ -8,7 +9,7 @@ module RubyToFaster
     attr_reader :root_dir, :resources, :budgets, :plugins, :hooks,
                 :extra_excludes, :extra_includes, :inline_spec_block
     attr_accessor :gemspec_path, :out_dir, :cache_dir, :incremental,
-                  :reproducible, :source_date_epoch, :parallel_jobs,
+                  :reproducible, :source_date_epoch, :compression_level, :parallel_jobs,
                   :strict_security, :auto_detect_resources, :skip_assets,
                   :skip_extensions, :write_staged_assets, :quiet, :verbose,
                   :asset_helper_module, :asset_helper_path
@@ -36,6 +37,7 @@ module RubyToFaster
       @incremental           = true
       @reproducible          = true
       @source_date_epoch     = parse_epoch(ENV["SOURCE_DATE_EPOCH"])
+      @compression_level     = Zlib::DEFAULT_COMPRESSION
       @parallel_jobs         = [Etc.nprocessors, 1].max
       @strict_security       = true
       @auto_detect_resources = true

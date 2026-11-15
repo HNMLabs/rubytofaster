@@ -29,7 +29,7 @@ module RubyToFaster
       ".map"   => "application/json; charset=utf-8"
     }.freeze
 
-    HASHED_ASSET_PATTERN = /(?:-[a-zA-Z0-9_]{6,}\.(?:js|mjs|css|woff2?|png|webp|svg)\z|\A_next\/static\/)/
+    HASHED_ASSET_PATTERN = /(?:-[a-zA-Z0-9_]{6,}\.(?:js|mjs|css|woff2?|png|webp|svg|gif)\z|\A_next\/static\/)/
 
     def initialize(app, root:, url_prefix: "/", spa_fallback: false, index_file: "index.html")
       @app          = app
@@ -43,10 +43,12 @@ module RubyToFaster
       method = env["REQUEST_METHOD"]
       return @app.call(env) unless method == "GET" || method == "HEAD"
 
-      path_info = env["PATH_INFO"].to_s
-      return @app.call(env) unless matches_prefix?(path_info)
+      raw_path_info = env["PATH_INFO"].to_s
+      decoded_path  = percent_decode(raw_path_info)
+      return forbidden_response if decoded_path.nil?
+      return @app.call(env) unless matches_prefix?(decoded_path)
 
-      rel_path = strip_prefix(path_info)
+      rel_path = strip_prefix(decoded_path)
       return forbidden_response if unsafe_path?(rel_path)
 
       resolved = resolve_candidate_file(rel_path)
@@ -61,6 +63,14 @@ module RubyToFaster
     end
 
     private
+
+    def percent_decode(str)
+      decoded = str.b.gsub(/%([0-9a-fA-F]{2})/) { [Regexp.last_match(1).hex].pack("C") }
+      decoded.force_encoding(Encoding::UTF_8)
+      return nil unless decoded.valid_encoding?
+
+      decoded
+    end
 
     def normalize_prefix(prefix)
       cleaned = "/#{prefix.to_s.strip}".gsub(%r{/+}, "/")
@@ -106,12 +116,28 @@ module RubyToFaster
     end
 
     def safe_file?(full_path)
+      return false unless Dir.exist?(@root)
+
       expanded = File.expand_path(full_path)
       root_prefix = @root.end_with?("/") ? @root : "#{@root}/"
       return false unless expanded.start_with?(root_prefix)
-      return false unless File.file?(expanded) && !File.symlink?(expanded)
 
-      true
+      rel = expanded.delete_prefix(root_prefix)
+      cursor = @root
+      rel.split("/").each do |part|
+        next if part.empty?
+
+        cursor = File.join(cursor, part)
+        return false if File.symlink?(cursor)
+      end
+
+      return false unless File.file?(expanded)
+
+      real_root = File.realpath(@root)
+      real_root_prefix = real_root.end_with?("/") ? real_root : "#{real_root}/"
+      File.realpath(expanded).start_with?(real_root_prefix)
+    rescue SystemCallError
+      false
     end
 
     def accepts_html?(env)
@@ -121,21 +147,31 @@ module RubyToFaster
 
     def serve_file(env, file_path, head_only)
       rel = file_path.delete_prefix("#{@root}/")
-      etag = compute_etag(file_path)
-
-      if env["HTTP_IF_NONE_MATCH"] == etag
-        return [304, { "etag" => etag, "cache-control" => cache_control_for(rel) }, []]
-      end
-
       gz_path = "#{file_path}.gz"
       use_gzip = client_accepts_gzip?(env) && safe_file?(gz_path)
+
+      base_token = etag_revision_token(file_path)
+      etag = use_gzip ? %(W/"#{base_token}-gz") : %(W/"#{base_token}")
+
+      if if_none_match_satisfied?(env["HTTP_IF_NONE_MATCH"], base_token)
+        return [
+          304,
+          {
+            "etag"          => etag,
+            "cache-control" => cache_control_for(rel),
+            "vary"          => "Accept-Encoding"
+          },
+          []
+        ]
+      end
+
       payload_path = use_gzip ? gz_path : file_path
 
       headers = {
-        "content-type"  => MIME_TYPES.fetch(File.extname(file_path).downcase, "application/octet-stream"),
-        "cache-control" => cache_control_for(rel),
-        "etag"          => etag,
-        "vary"          => "Accept-Encoding",
+        "content-type"           => MIME_TYPES.fetch(File.extname(file_path).downcase, "application/octet-stream"),
+        "cache-control"          => cache_control_for(rel),
+        "etag"                   => etag,
+        "vary"                   => "Accept-Encoding",
         "x-content-type-options" => "nosniff"
       }
       headers["content-encoding"] = "gzip" if use_gzip
@@ -147,7 +183,34 @@ module RubyToFaster
     end
 
     def client_accepts_gzip?(env)
-      env["HTTP_ACCEPT_ENCODING"].to_s.include?("gzip")
+      raw = env["HTTP_ACCEPT_ENCODING"].to_s
+      return false if raw.empty?
+
+      raw.split(",").any? do |directive|
+        parts = directive.strip.split(";").map(&:strip)
+        coding = parts.first&.downcase
+        next false unless coding == "gzip" || coding == "x-gzip"
+
+        q_param = parts[1..]&.find { |p| p.downcase.start_with?("q=") }
+        next true unless q_param
+
+        q_val = begin
+          Float(q_param.split("=", 2).last)
+        rescue ArgumentError
+          1.0
+        end
+        q_val.positive?
+      end
+    end
+
+    def if_none_match_satisfied?(header_val, base_token)
+      return false if header_val.nil? || header_val.strip.empty?
+      return true if header_val.strip == "*"
+
+      header_val.split(",").any? do |candidate|
+        cleaned = candidate.strip.sub(/\AW\//i, "").gsub(/\A"|"\z/, "").sub(/-gz\z/, "")
+        cleaned == base_token
+      end
     end
 
     def cache_control_for(rel_path)
@@ -158,9 +221,9 @@ module RubyToFaster
       end
     end
 
-    def compute_etag(file_path)
+    def etag_revision_token(file_path)
       stat = File.stat(file_path)
-      %(W/"#{stat.size.to_s(16)}-#{stat.mtime.to_i.to_s(16)}")
+      "#{stat.size.to_s(16)}-#{stat.mtime.to_i.to_s(16)}"
     end
 
     def forbidden_response

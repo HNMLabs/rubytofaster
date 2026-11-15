@@ -1,0 +1,89 @@
+name: Benchmarks GIF
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/**"
+      - "exe/**"
+      - "sig/**"
+      - "rubytofaster.gemspec"
+      - "gem.build.rb"
+      - ".github/workflows/benchmarks.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "lib/**"
+      - "exe/**"
+      - "sig/**"
+      - "rubytofaster.gemspec"
+      - "gem.build.rb"
+      - ".github/workflows/benchmarks.yml"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Benchmark iterations per strategy"
+        required: false
+        default: "10"
+      commit_gif:
+        description: "Commit updated assets/benchmarks.gif to branch"
+        required: false
+        default: "true"
+
+concurrency:
+  group: benchmarks-gif-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark-gif:
+    name: Measure Real Speed Scores & Render GIF89a
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby 3.4
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: false
+
+      - name: Run real hardware benchmark & generate GIF89a + JSON telemetry
+        env:
+          ITERS: ${{ inputs.iterations || '10' }}
+        run: |
+          ./exe/rtf bench -n "${ITERS}" -w 2 \
+            --gif assets/benchmarks.gif \
+            --json-out assets/benchmarks.json \
+            --markdown-out pkg/benchmarks.md
+
+          cat pkg/benchmarks.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "_Generated natively by \`RubyToFaster::GifRenderer\` (zero external dependencies)._" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark GIF & JSON artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rubytofaster-benchmark-gif
+          path: |
+            assets/benchmarks.gif
+            assets/benchmarks.json
+            pkg/benchmarks.md
+
+      - name: Publish updated real benchmark GIF to repository
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.commit_gif == 'true')
+        run: |
+          if git diff --quiet -- assets/benchmarks.gif assets/benchmarks.json; then
+            echo "Benchmark artifacts unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/benchmarks.gif assets/benchmarks.json
+          git commit -m "chore(bench): update real hardware speed score GIF & telemetry [skip ci]"
+          git push origin HEAD:main || echo "::notice::Skipped direct push to main (protected branch); use uploaded artifact."

@@ -8,6 +8,27 @@ module RubyToFaster
       @hooks   = config.hooks
     end
 
+    def has_transforms?
+      !@hooks[:transform].empty? || @plugins.any? { |p| p.respond_to?(:transform) }
+    end
+
+    # Returns true if any inline closure hook or un-fingerprinted custom plugin mutates bundle entries,
+    # requiring eager execution prior to Merkle cache lookup.
+    def has_dynamic_hooks?
+      return true unless @hooks[:transform].empty? && @hooks[:generate_bundle].empty?
+
+      @plugins.any? do |p|
+        mutates = p.respond_to?(:transform) || p.respond_to?(:generate_bundle)
+        mutates && !p.respond_to?(:cache_fingerprint)
+      end
+    end
+
+    def cache_fingerprints
+      @plugins.map do |p|
+        p.respond_to?(:cache_fingerprint) ? p.cache_fingerprint.to_s : p.class.name.to_s
+      end
+    end
+
     def run_before_resolve(context)
       @plugins.each do |plugin|
         plugin.before_resolve(context) if plugin.respond_to?(:before_resolve)
