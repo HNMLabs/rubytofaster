@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release-artifacts:
-    name: Build Deterministic Gem, SBOM & Provenance
+    name: Build Deterministic Gem, SBOM, Provenance & Benchmark GIF
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,13 +25,16 @@ jobs:
       - name: Run test suite
         run: rake test
 
-      - name: Build deterministic release artifacts
+      - name: Build deterministic release artifacts & real benchmark GIF
         run: |
           ./exe/rtf build --no-cache --sbom --provenance
           VER=$(ruby -Ilib -rrubytofaster/version -e 'puts RubyToFaster::VERSION')
           ./exe/rtf analyze "pkg/rubytofaster-${VER}.gem" --html "pkg/rubytofaster-${VER}-bundle-report.html"
+          ./exe/rtf bench -n 10 -w 2 \
+            --gif "pkg/rubytofaster-${VER}-benchmarks.gif" \
+            --json-out "pkg/rubytofaster-${VER}-benchmarks.json"
 
-      - name: Publish GitHub Release with SBOM & SLSA Provenance
+      - name: Publish GitHub Release with SBOM, SLSA Provenance & Benchmark GIF
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

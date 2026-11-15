@@ -32,7 +32,7 @@ jobs:
       - name: Run Minitest suite (warnings enabled)
         run: rake test
 
-      - name: Self-hosted build, SBOM, SLSA provenance & reproducibility verification
+      - name: Self-hosted build, SBOM, SLSA provenance, reproducibility & GIF benchmark verification
         run: |
           ./gem.build.rb
           VER=$(ruby -Ilib -rrubytofaster/version -e 'puts RubyToFaster::VERSION')
@@ -51,6 +51,10 @@ jobs:
           ./exe/rtf analyze "$GEM_FILE" --html pkg/bundle-report.html
           test -f pkg/bundle-report.html
 
-          ./exe/rtf bench -n 3
+          ./exe/rtf bench -n 3 -w 1 --gif pkg/benchmarks.gif --json-out pkg/benchmarks.json
+          test -s pkg/benchmarks.gif
+          test -s pkg/benchmarks.json
+          ruby -e 'abort("Invalid GIF89a") unless File.binread("pkg/benchmarks.gif", 6) == "GIF89a"'
+
           gem install --local "$GEM_FILE" --no-document
           rtf --version

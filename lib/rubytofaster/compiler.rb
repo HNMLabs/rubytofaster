@@ -8,6 +8,7 @@ module RubyToFaster
     :gem_name,
     :gem_version,
     :gem_path,
+    :root_dir,
     :gem_sha256,
     :gem_sha512,
     :compressed_bytes,
@@ -42,7 +43,8 @@ module RubyToFaster
   end
 
   # Orchestrates file resolution, Angular/Vite/Next.js resource collection,
-  # Merkle cache lookup, native extension verification, and deterministic `.gem` packaging.
+  # in-memory transforms, Merkle cache lookup, native extension verification,
+  # and deterministic `.gem` packaging.
   class Compiler
     def initialize(config)
       @config        = config
@@ -68,33 +70,47 @@ module RubyToFaster
       merge_frontend_resources!(entries, adapter_results)
       timings[:resources_ms] = elapsed_since(t0)
 
-      @plugin_runner.run_generate_bundle(entries, @config)
+      eager_transforms = @plugin_runner.has_dynamic_hooks?
+      if eager_transforms
+        t0 = monotonic_ms
+        run_bundle_transforms_and_generators!(entries)
+        timings[:transform_ms] = elapsed_since(t0)
+      end
 
       out_file_name = spec.file_name
       target_gem_path = File.join(@config.resolved_out_dir, out_file_name)
 
       t0 = monotonic_ms
-      cache_key = @cache.compute_key(spec: spec, entries: entries)
+      cache_key = @cache.compute_key(
+        spec: spec,
+        entries: entries,
+        plugin_fingerprints: @plugin_runner.cache_fingerprints
+      )
       cached_meta = @cache.fetch(cache_key, target_gem_path)
       timings[:cache_ms] = elapsed_since(t0)
 
       if cached_meta
-        entry_sizes = entries.transform_values(&:size)
+        cached_sizes = if cached_meta[:entry_sizes].is_a?(Hash)
+                         cached_meta[:entry_sizes].transform_keys(&:to_s)
+                       else
+                         entries.transform_values(&:size)
+                       end
         warnings = BudgetEvaluator.new(@config.budgets).evaluate!(
           compressed_bytes: cached_meta[:compressed_bytes],
           unpacked_bytes: cached_meta[:unpacked_bytes],
-          entry_sizes: entry_sizes
+          entry_sizes: cached_sizes
         )
 
         result = BuildResult.new(
           gem_name: spec.name,
           gem_version: spec.version.to_s,
           gem_path: target_gem_path,
+          root_dir: @config.root_dir,
           gem_sha256: cached_meta[:gem_sha256],
           gem_sha512: cached_meta[:gem_sha512],
           compressed_bytes: cached_meta[:compressed_bytes],
           unpacked_bytes: cached_meta[:unpacked_bytes],
-          entry_count: entries.size,
+          entry_count: cached_meta[:entry_count] || entries.size,
           pruned_count: pruned_files.size,
           cache_hit: true,
           cache_key: cache_key,
@@ -108,12 +124,23 @@ module RubyToFaster
         return result
       end
 
+      unless eager_transforms
+        t0 = monotonic_ms
+        run_bundle_transforms_and_generators!(entries)
+        timings[:transform_ms] = elapsed_since(t0)
+      end
+
       t0 = monotonic_ms
       ext_results = ExtensionBuilder.new(@config).compile_all(spec)
       timings[:extensions_ms] = elapsed_since(t0)
 
       t0 = monotonic_ms
-      pkg_stats = @packager.build(spec: spec, entries: entries, out_path: target_gem_path)
+      pkg_stats = @packager.build(
+        spec: spec,
+        entries: entries,
+        out_path: target_gem_path,
+        already_transformed: true
+      )
       timings[:package_ms] = elapsed_since(t0)
 
       warnings = BudgetEvaluator.new(@config.budgets).evaluate!(
@@ -134,7 +161,8 @@ module RubyToFaster
           gem_sha512: pkg_stats.gem_sha512,
           compressed_bytes: pkg_stats.compressed_bytes,
           unpacked_bytes: pkg_stats.unpacked_bytes,
-          entry_count: pkg_stats.entry_count
+          entry_count: pkg_stats.entry_count,
+          entry_sizes: pkg_stats.entry_sizes
         }
       )
 
@@ -142,6 +170,7 @@ module RubyToFaster
         gem_name: spec.name,
         gem_version: spec.version.to_s,
         gem_path: target_gem_path,
+        root_dir: @config.root_dir,
         gem_sha256: pkg_stats.gem_sha256,
         gem_sha512: pkg_stats.gem_sha512,
         compressed_bytes: pkg_stats.compressed_bytes,
@@ -162,6 +191,38 @@ module RubyToFaster
     end
 
     private
+
+    def run_bundle_transforms_and_generators!(entries)
+      apply_transforms!(entries, entries.keys)
+      pre_bundle_keys = entries.keys
+      @plugin_runner.run_generate_bundle(entries, @config)
+      added_keys = entries.keys - pre_bundle_keys
+      apply_transforms!(entries, added_keys) unless added_keys.empty?
+    end
+
+    def apply_transforms!(entries, target_keys)
+      return unless @plugin_runner.has_transforms?
+
+      target_keys.sort.each do |gem_path|
+        entry = entries[gem_path]
+        next unless entry
+
+        raw_bytes = entry.bytes
+        transformed = @plugin_runner.run_transform(gem_path, raw_bytes)
+        next if transformed.nil? || transformed.equal?(raw_bytes)
+
+        transformed_bin = transformed.b
+        next if transformed_bin == raw_bytes.b
+
+        entries[gem_path] = PackageEntry.new(
+          gem_path: entry.gem_path,
+          source_path: nil,
+          content: transformed_bin,
+          mode: entry.mode,
+          executable: entry.executable
+        )
+      end
+    end
 
     def collect_frontend_resources
       configured = @config.resources.dup

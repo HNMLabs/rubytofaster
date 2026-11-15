@@ -22,23 +22,28 @@ module RubyToFaster
   class FileResolver
     SECRET_PATTERNS = [
       /(?:\A|\/)\.env(?:\..+)?\z/,
-      /(?:\A|\/)(?:id_rsa|id_ed25519|.*\.(?:pem|key|p12))\z/i,
-      /(?:\A|\/)credentials\.yml\.enc\z/
+      /(?:\A|\/)(?:id_rsa|id_ed25519|id_ecdsa|.*\.(?:pem|key|p12|pfx|keystore))\z/i,
+      /(?:\A|\/)(?:credentials\.yml\.enc|master\.key|\.netrc|\.npmrc)\z/
     ].freeze
 
     def initialize(config)
-      @config   = config
-      @root_dir = config.root_dir
+      @config      = config
+      @root_dir    = config.root_dir
+      @root_real   = File.exist?(@root_dir) ? File.realpath(@root_dir) : @root_dir
+      @root_prefix = @root_real.end_with?("/") ? @root_real : "#{@root_real}/"
     end
 
     def load_gemspec
       if @config.inline_spec_block
-        spec = Gem::Specification.new(&@config.inline_spec_block)
+        spec = RubyToFaster.with_chdir(@root_dir) do
+          Gem::Specification.new(&@config.inline_spec_block)
+        end
         return [spec, nil]
       end
 
       spec_file = resolve_gemspec_path
-      spec = Dir.chdir(@root_dir) { Gem::Specification.load(spec_file) }
+      spec_dir  = File.dirname(spec_file)
+      spec = RubyToFaster.with_chdir(spec_dir) { Gem::Specification.load(spec_file) }
       raise ConfigError, "Failed to load gemspec from #{spec_file}" unless spec
 
       [spec, spec_file]
@@ -50,22 +55,22 @@ module RubyToFaster
       candidates = Array(spec.files).dup
 
       unless @config.extra_includes.empty?
-        Dir.chdir(@root_dir) do
-          @config.extra_includes.each do |glob|
-            candidates.concat(Dir.glob(glob).select { |f| File.file?(f) })
+        @config.extra_includes.each do |glob|
+          matched = Dir.glob(glob, base: @root_dir).select do |rel|
+            File.file?(File.join(@root_dir, rel))
           end
+          candidates.concat(matched)
         end
       end
 
-      if candidates.empty?
-        candidates = default_convention_files
-      end
+      candidates = default_convention_files if candidates.empty?
 
       bindir = spec.bindir || "exe"
       executables = Array(spec.executables).map { |exe| File.join(bindir, exe) }
 
-      entries = {}
-      pruned_files = []
+      entries       = {}
+      pruned_files  = []
+      verified_dirs = { @root_dir => true }
 
       candidates.uniq.each do |raw_path|
         norm = sanitize_relative_path!(raw_path)
@@ -78,19 +83,29 @@ module RubyToFaster
         full_path = File.expand_path(norm, @root_dir)
         verify_within_root!(norm, full_path)
 
-        next unless File.exist?(full_path)
-
-        stat = File.lstat(full_path)
-        if stat.symlink?
-          verify_safe_symlink!(norm, full_path)
-          next unless File.file?(full_path)
-        elsif !stat.file?
+        stat = begin
+          File.lstat(full_path)
+        rescue Errno::ENOENT
           next
+        end
+
+        if stat.symlink?
+          verify_realpath_within_root!(norm, full_path, symlink: true)
+          next unless File.file?(full_path)
+        else
+          next unless stat.file?
+
+          parent_dir = File.dirname(full_path)
+          unless verified_dirs[parent_dir]
+            verify_realpath_within_root!(norm, parent_dir, symlink: false)
+            verified_dirs[parent_dir] = true
+          end
         end
 
         check_secret_file!(norm) if @config.strict_security
 
-        is_exec = executables.include?(norm) || (stat.mode & 0o111) != 0
+        target_stat = stat.symlink? ? File.stat(full_path) : stat
+        is_exec = executables.include?(norm) || (target_stat.mode & 0o111) != 0
         entries[norm] = PackageEntry.new(
           gem_path: norm,
           source_path: full_path,
@@ -138,10 +153,13 @@ module RubyToFaster
     end
 
     def default_convention_files
-      Dir.chdir(@root_dir) do
-        Dir.glob("{lib,exe,bin,ext,sig}/**/*").select { |f| File.file?(f) } +
-          Dir.glob("{LICENSE*,README*,CHANGELOG*,SECURITY*,*.gemspec}").select { |f| File.file?(f) }
+      code_files = Dir.glob("{lib,exe,bin,ext,sig}/**/*", base: @root_dir).select do |f|
+        File.file?(File.join(@root_dir, f))
       end
+      doc_files = Dir.glob("{LICENSE*,README*,CHANGELOG*,SECURITY*,*.gemspec}", base: @root_dir).select do |f|
+        File.file?(File.join(@root_dir, f))
+      end
+      code_files + doc_files
     end
 
     def excluded?(norm_path)
@@ -163,15 +181,13 @@ module RubyToFaster
       end
     end
 
-    def verify_safe_symlink!(norm_path, full_path)
+    def verify_realpath_within_root!(norm_path, full_path, symlink:)
       real_target = File.realpath(full_path)
-      root_real   = File.realpath(@root_dir)
-      root_prefix = root_real.end_with?("/") ? root_real : "#{root_real}/"
-      unless real_target.start_with?(root_prefix)
-        raise SecurityError, "Symlink '#{norm_path}' points outside project root to '#{real_target}'"
+      unless real_target == @root_real || real_target.start_with?(@root_prefix)
+        raise SecurityError, "Symlink or parent directory '#{norm_path}' points outside project root to '#{real_target}'"
       end
     rescue Errno::ENOENT
-      raise SecurityError, "Dangling symlink '#{norm_path}' is not permitted in gem package"
+      raise SecurityError, "Dangling symlink '#{norm_path}' is not permitted in gem package" if symlink
     end
 
     def check_secret_file!(norm_path)

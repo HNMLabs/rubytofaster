@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "json"
 
 module RubyToFaster
@@ -12,13 +13,23 @@ module RubyToFaster
       def initialize(embed_in_gem: false, output_filename: nil)
         @embed_in_gem    = embed_in_gem
         @output_filename = output_filename
+        @root_dir        = nil
+      end
+
+      def cache_fingerprint
+        "SBOM:embed=#{@embed_in_gem}"
+      end
+
+      def before_resolve(config)
+        @root_dir = config.root_dir
       end
 
       def generate_bundle(entries, config)
+        @root_dir = config.root_dir
         return unless @embed_in_gem
 
         spec, = FileResolver.new(config).load_gemspec
-        sbom_json = build_cyclonedx_json(spec, entries, config)
+        sbom_json = build_cyclonedx_json(spec, entries, config.root_dir)
         entries["sbom.cdx.json"] = PackageEntry.new(
           gem_path: "sbom.cdx.json",
           source_path: nil,
@@ -30,8 +41,12 @@ module RubyToFaster
 
       def after_package(result)
         target = @output_filename || "#{result.gem_path}.sbom.cdx.json"
+        FileUtils.mkdir_p(File.dirname(File.expand_path(target)))
         pkg = Gem::Package.new(result.gem_path)
         spec = pkg.spec
+        project_root = (result.respond_to?(:root_dir) && result.root_dir) ||
+                       @root_dir ||
+                       File.dirname(File.dirname(result.gem_path))
 
         doc = {
           "bomFormat"   => "CycloneDX",
@@ -50,7 +65,7 @@ module RubyToFaster
               ].compact
             }
           },
-          "components" => collect_runtime_components(spec, File.dirname(File.dirname(result.gem_path)))
+          "components" => collect_runtime_components(spec, project_root)
         }
 
         File.write(target, "#{JSON.pretty_generate(doc)}\n")
@@ -58,7 +73,7 @@ module RubyToFaster
 
       private
 
-      def build_cyclonedx_json(spec, entries, config)
+      def build_cyclonedx_json(spec, entries, root_dir)
         file_hashes = entries.keys.sort.map do |path|
           entry = entries[path]
           {
@@ -81,7 +96,7 @@ module RubyToFaster
               "purl"    => "pkg:gem/#{spec.name}@#{spec.version}"
             }
           },
-          "components" => collect_runtime_components(spec, config.root_dir) + file_hashes
+          "components" => collect_runtime_components(spec, root_dir) + file_hashes
         }
         "#{JSON.pretty_generate(doc)}\n"
       end

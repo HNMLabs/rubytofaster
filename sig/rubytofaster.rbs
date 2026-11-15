@@ -12,9 +12,11 @@ module RubyToFaster
   class SecurityError < Error
   end
 
-  def self.build: (?root_dir: String, ?report: bool?, ?out: IO) ?{ (Config) -> void } -> BuildResult?
-  def self.define: (?root_dir: String) ?{ (Config) -> void } -> Config
+  def self.with_chdir: [T] (String dir) { () -> T } -> T
+  def self.build: (?root_dir: String?, ?report: bool?, ?out: IO) ?{ (Config) -> void } -> BuildResult?
+  def self.define: (?root_dir: String?) ?{ (Config) -> void } -> Config
   def self.workspace: (?root_dir: String, ?patterns: Array[String]?, ?parallel_jobs: Integer?, ?incremental: bool) -> Workspace::WorkspaceResult
+  def self.bench: (?root_dir: String, ?iterations: Integer, ?warmup: Integer, ?gif_out: String?, ?json_out: String?, ?markdown_out: String?) -> Hash[Symbol, untyped]
   def self.inspect_gem: (String gem_path) -> Hash[Symbol, untyped]
   def self.analyze_gem: (String gem_path, ?html_out: String?) -> Hash[Symbol, untyped]
   def self.load_script_config: (String script_path) -> Config
@@ -24,12 +26,16 @@ module RubyToFaster
     attr_reader resources: Array[Hash[Symbol, untyped]]
     attr_reader budgets: Array[Hash[Symbol, untyped]]
     attr_reader plugins: Array[untyped]
+    attr_reader hooks: Hash[Symbol, Array[Proc]]
+    attr_reader extra_excludes: Array[Regexp | String]
+    attr_reader extra_includes: Array[String]
     attr_accessor gemspec_path: String?
     attr_accessor out_dir: String
     attr_accessor cache_dir: String
     attr_accessor incremental: bool
     attr_accessor reproducible: bool
     attr_accessor source_date_epoch: Integer?
+    attr_accessor compression_level: Integer
     attr_accessor parallel_jobs: Integer
     attr_accessor strict_security: bool
     attr_accessor auto_detect_resources: bool
@@ -38,10 +44,17 @@ module RubyToFaster
     attr_accessor write_staged_assets: bool
     attr_accessor quiet: bool
     attr_accessor verbose: bool
+    attr_accessor asset_helper_module: String?
+    attr_accessor asset_helper_path: String?
 
     def initialize: (?root_dir: String) -> void
     def gemspec: (?String? path) -> String?
     def spec: () { (Gem::Specification) -> void } -> void
+    def output_dir: (String dir) -> String
+    def cache: (?bool enabled, ?dir: String?) -> void
+    def parallel: (Integer jobs) -> Integer
+    def exclude: (*(Regexp | String) patterns) -> void
+    def include_files: (*String globs) -> void
     def vite: (?root: String, ?out_dir: String, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
     def nextjs: (?root: String, ?mode: Symbol, ?out_dir: String?, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
     def angular: (?root: String, ?project: String?, ?out_dir: String?, ?mount_to: String, ?build_command: Array[String]?, ?auto_build: bool, **untyped) -> void
@@ -52,6 +65,12 @@ module RubyToFaster
     def validate_ruby_syntax: (?normalize_newlines: bool) -> void
     def generate_sbom: (?embed_in_gem: bool, ?output_filename: String?) -> void
     def generate_provenance: () -> void
+    def before_resolve: () { (Config) -> void } -> void
+    def transform: () { (String, String) -> String? } -> void
+    def generate_bundle: () { (Hash[String, untyped], Config) -> void } -> void
+    def after_package: () { (BuildResult) -> void } -> void
+    def resolved_out_dir: () -> String
+    def resolved_cache_dir: () -> String
   end
 
   class Middleware
@@ -63,6 +82,7 @@ module RubyToFaster
     attr_reader gem_name: String
     attr_reader gem_version: String
     attr_reader gem_path: String
+    attr_reader root_dir: String?
     attr_reader gem_sha256: String
     attr_reader gem_sha512: String
     attr_reader compressed_bytes: Integer
@@ -71,8 +91,29 @@ module RubyToFaster
     attr_reader pruned_count: Integer
     attr_reader cache_hit: bool
     attr_reader cache_key: String
+    attr_reader resources: Array[untyped]
+    attr_reader extensions: Array[untyped]
+    attr_reader budget_warnings: Array[String]
+    attr_reader timings_ms: Hash[Symbol, Float]
     attr_reader total_ms: Float
     def to_h: () -> Hash[Symbol, untyped]
+  end
+
+  class Benchmarker
+    def initialize: (?root_dir: String, ?iterations: Integer, ?warmup: Integer) -> void
+    def run: () -> Hash[Symbol, untyped]
+    def format_markdown: (Hash[Symbol, untyped] report) -> String
+    def write_gif: (Hash[Symbol, untyped] report, String gif_path) -> String
+    def write_json: (Hash[Symbol, untyped] report, String json_path) -> String
+    def write_markdown: (Hash[Symbol, untyped] report, String md_path) -> String
+  end
+
+  class GifRenderer
+    WIDTH: Integer
+    HEIGHT: Integer
+    def self.render_benchmark: (Hash[Symbol | String, untyped] report, ?String? output_path) -> String
+    def initialize: (Hash[Symbol | String, untyped] report, ?anim_frames: Integer) -> void
+    def encode_gif: () -> String
   end
 
   class Workspace

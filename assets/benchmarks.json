@@ -1,0 +1,70 @@
+{
+  "rubytofaster_version": "0.3.0",
+  "ruby_version": "3.1.2",
+  "ruby_description": "ruby 3.1.2p20 (2022-04-12 revision 4491bb740a) [x86_64-linux-gnu]",
+  "platform": "x86_64-linux-gnu",
+  "cpu_cores": 2,
+  "gem_name": "rubytofaster",
+  "gem_version": "0.3.0",
+  "entry_count": 39,
+  "compressed_bytes": 62976,
+  "unpacked_bytes": 201835,
+  "gem_sha256": "f44279a477b0017327522140075793cc566650dd29642c3e6df85538515e73dd",
+  "git_sha": "c6ba6842",
+  "measured_at": "2026-11-15T19:34:43Z",
+  "iterations": 10,
+  "warmup": 2,
+  "cold_speedup": 6.8,
+  "cache_speedup": 189.0,
+  "peak_speedup": 189.0,
+  "benchmarks": [
+    {
+      "name": "gem build (CLI subprocess)",
+      "runs": 5,
+      "mean_ms": 170.09,
+      "median_ms": 169.32,
+      "min_ms": 166.47,
+      "max_ms": 176.76,
+      "p95_ms": 176.76,
+      "stddev_ms": 3.5,
+      "ops_per_sec": 5.9,
+      "speedup_vs_baseline": 1.0
+    },
+    {
+      "name": "Gem::Package.build (in-process)",
+      "runs": 10,
+      "mean_ms": 26.73,
+      "median_ms": 25.41,
+      "min_ms": 24.84,
+      "max_ms": 32.78,
+      "p95_ms": 32.78,
+      "stddev_ms": 2.53,
+      "ops_per_sec": 37.4,
+      "speedup_vs_baseline": 6.4
+    },
+    {
+      "name": "RubyToFaster (cold deterministic)",
+      "runs": 10,
+      "mean_ms": 24.88,
+      "median_ms": 24.09,
+      "min_ms": 22.62,
+      "max_ms": 28.23,
+      "p95_ms": 28.23,
+      "stddev_ms": 1.73,
+      "ops_per_sec": 40.2,
+      "speedup_vs_baseline": 6.8
+    },
+    {
+      "name": "RubyToFaster (Merkle cache hit)",
+      "runs": 10,
+      "mean_ms": 0.9,
+      "median_ms": 0.86,
+      "min_ms": 0.8,
+      "max_ms": 1.17,
+      "p95_ms": 1.17,
+      "stddev_ms": 0.13,
+      "ops_per_sec": 1107.4,
+      "speedup_vs_baseline": 189.0
+    }
+  ]
+}

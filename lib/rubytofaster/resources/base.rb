@@ -95,6 +95,9 @@ module RubyToFaster
           raise BuildError, "#{framework_name} build output directory not found: #{dir}"
         end
 
+        real_base = File.realpath(dir)
+        real_base_prefix = real_base.end_with?("/") ? real_base : "#{real_base}/"
+
         staged = {}
         asset_map = {}
 
@@ -105,10 +108,15 @@ module RubyToFaster
 
           full = File.join(dir, rel)
           stat = File.lstat(full)
-          if stat.symlink?
+          if stat.symlink? || contains_symlink_segment?(dir, rel)
             raise SecurityError, "Symlinks inside #{framework_name} build output are disallowed: #{rel}"
           end
           next unless stat.file?
+
+          real_full = File.realpath(full)
+          unless real_full.start_with?(real_base_prefix)
+            raise SecurityError, "#{framework_name} asset escapes output directory: #{rel}"
+          end
 
           clean_rel = @file_resolver.sanitize_relative_path!(rel)
           gem_dest  = @file_resolver.sanitize_relative_path!(File.join(target_mount, clean_rel))
@@ -128,6 +136,17 @@ module RubyToFaster
         end
 
         [staged, asset_map]
+      end
+
+      def contains_symlink_segment?(base_dir, rel_path)
+        cursor = base_dir
+        rel_path.split("/").each do |part|
+          next if part.empty?
+
+          cursor = File.join(cursor, part)
+          return true if File.symlink?(cursor)
+        end
+        false
       end
 
       def monotonic_ms
